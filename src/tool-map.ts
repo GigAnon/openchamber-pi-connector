@@ -73,6 +73,10 @@ export const toolMappers: Record<string, ToolMapper> = {
     return { tool: "task", input, title: typeof input.description === "string" ? input.description : "task" };
   },
 };
+// pi subagent extensions: @tintinweb/pi-subagents' `Agent` (Claude Code style) and @gotgenes/pi-subagents' `subagent`
+// take the same description / prompt / subagent_type arguments: OpenChamber's task card
+toolMappers.Agent = (args, result) => toolMappers.task!(args, result);
+toolMappers.subagent = (args, result) => toolMappers.task!(args, result);
 
 /** Text blocks only; images and structured details are not tool output text. */
 export function resultText(content: unknown): string {

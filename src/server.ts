@@ -7,6 +7,8 @@ import { randomUUID } from "node:crypto";
 import { debugLog, miscRoute } from "./misc-routes.js";
 import { execFile } from "node:child_process";
 import { homedir, tmpdir } from "node:os";
+import { join } from "node:path";
+import { piAgentDir } from "./agent-dir.js";
 import { SessionManager, type ManagedSession } from "./sessions.js";
 import { ApprovalInputError, toV2Permission } from "./approvals.js";
 import type { TodoUpdated } from "./todo-bridge.js";
@@ -643,7 +645,27 @@ export class AdapterServer {
       return;
     }
     if (path === "/api/config" && method === "GET") {
-      this.json(res, 200, withLocation({ default_agent: getAgentName() }));
+      // opencode 2.2: the config is a list of documents, merged in order by the client (OpenChamber 2.7)
+      const cat = await this.catalog();
+      const model = defaultV2Model(cat) as { providerID?: string; modelID?: string; id?: string } | null | undefined;
+      this.json(res, 200, [{
+        type: "document",
+        path: join(piAgentDir(), "settings.json"),
+        info: {
+          default_agent: getAgentName(),
+          ...(model?.providerID ? { model: { providerID: model.providerID, model: model.modelID ?? model.id } } : {}),
+        },
+      }]);
+      return;
+    }
+    // opencode 2.2 surfaces OpenChamber 2.7 probes at startup: nothing of the kind in pi, so empty answers
+    if ((path === "/api/integration" || path === "/api/mcp" || path === "/api/shell" || path === "/api/websearch/provider")
+        && method === "GET") {
+      this.json(res, 200, withLocation([]));
+      return;
+    }
+    if (path === "/api/experimental/job" && method === "GET") {
+      this.json(res, 200, { data: [] });
       return;
     }
     if (path === "/api/provider" && method === "GET") {

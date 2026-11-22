@@ -108,10 +108,11 @@ test("config includes default_agent with resolved OmO name", () => {
     });
     // v1 /config returns { default_agent }
     assert.deepEqual(result.v1Config, { default_agent: "OmO" });
-    // v2 /api/config returns { location, data: { default_agent } }
-    assert.ok(result.v2Config && typeof result.v2Config === "object" && "data" in result.v2Config);
-    const v2Data = (result.v2Config as Record<string, unknown>).data;
-    assert.deepEqual(v2Data, { default_agent: "OmO" });
+    // v2 /api/config (opencode 2.2): a list of config documents, merged in order by the client
+    assert.ok(Array.isArray(result.v2Config));
+    const doc = (result.v2Config as Array<Record<string, unknown>>)[0]!;
+    assert.equal(doc.type, "document");
+    assert.equal((doc.info as Record<string, unknown>).default_agent, "OmO");
   } finally {
     rmSync(state, { recursive: true, force: true });
   }

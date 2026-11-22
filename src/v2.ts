@@ -420,14 +420,15 @@ export class V2EventTranslator {
       }
       case "permission.asked": {
         const p = ev.properties;
-        return [this.frame(directory, "permission.v2.asked", {
+        // opencode 2.2's event (OpenChamber 2.7): permission.asked, the tool call as source.id
+        return [this.frame(directory, "permission.asked", {
           id: p.id, sessionID: p.sessionID, action: p.permission,
           resources: p.patterns, save: p.always, metadata: p.metadata,
-          ...(p.tool ? { source: { type: "tool", ...p.tool } } : {}),
+          ...(p.tool ? { source: { type: "tool", messageID: p.tool.messageID, id: p.tool.callID } } : {}),
         })];
       }
       case "permission.replied":
-        return [this.frame(directory, "permission.v2.replied", ev.properties)];
+        return [this.frame(directory, "permission.replied", ev.properties)];
       case "question.asked":
         return [this.frame(directory, "question.v2.asked", ev.properties)];
       case "question.replied":

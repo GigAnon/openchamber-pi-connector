@@ -885,8 +885,10 @@ export class AdapterServer {
       if (permissionMatch) {
         const requestId = decodeURIComponent(permissionMatch[1]!);
         if (permissionMatch[2] === "/reply" && method === "POST") {
-          const body = (await this.body(req)) as { reply?: "once" | "always" | "reject"; message?: string };
-          if (!body.reply || !this.sessions.replyPermission(sessionId, requestId, body.reply, body.message)) {
+          // opencode 2.2 (OpenChamber 2.7) sends { decision }, earlier ones { reply }
+          const body = (await this.body(req)) as { reply?: "once" | "always" | "reject"; decision?: "once" | "always" | "reject"; message?: string };
+          const decision = body.decision ?? body.reply;
+          if (!decision || !this.sessions.replyPermission(sessionId, requestId, decision, body.message)) {
             this.json(res, 404, { name: "PermissionNotFoundError", data: { message: `permission not found: ${requestId}` } });
             return;
           }

@@ -72,6 +72,36 @@ export function parsePermissionTitle(title: string): { permission: string; patte
   return { permission, patterns };
 }
 
+/** @gotgenes/pi-permission-system's select: "Permission Required" then "key : value" lines (tool, rule, command,
+ * path...), options Yes / "Yes, allow ... for this session" / No / "No, provide reason". */
+export function isPiPermissionSystemTitle(title: string): boolean {
+  // "Permission Required (Subagent)": an ask forwarded from a subagent, nested or not
+  return /^Permission Required(\s*\(Subagent\))?\s*$/.test(title.split(/\r?\n/)[0] ?? "");
+}
+
+export function parsePiPermissionSystemTitle(title: string): { permission: string; patterns: string[]; always: string[] } {
+  const fields: Record<string, string> = {};
+  for (const line of title.split(/\r?\n/).slice(1)) {
+    const m = line.match(/^\s*([A-Za-z_ ]+?)\s*:\s*(.*)$/);
+    if (m && m[1] !== undefined && m[2] !== undefined && fields[m[1].toLowerCase()] === undefined) fields[m[1].toLowerCase()] = m[2].trim();
+  }
+  const tool = fields.tool ?? fields.surface ?? "permission";
+  const permission = tool === "bash" ? "shell" : tool;  // opencode's name for it, which OpenChamber renders
+  const what = fields.command ?? fields.path ?? fields.target ?? fields.server ?? fields.skill ?? tool;
+  return { permission, patterns: [what], always: fields.rule ? [fields.rule] : [] };
+}
+
+/** The select label for a reply: the classic labels, or pi-permission-system's. */
+export function permissionLabel(options: string[], reply: PermissionReply, message?: string): string {
+  const classic = reply === "once" ? "Allow once" : reply === "always" ? "Allow always" : message ? "Deny with feedback" : "Deny";
+  if (options.includes(classic)) return classic;
+  const pick = reply === "once" ? options.find((o) => o === "Yes")
+    : reply === "always" ? options.find((o) => /^Yes, allow /.test(o))
+      : message ? options.find((o) => /^No, provide reason/.test(o)) ?? options.find((o) => o === "No")
+        : options.find((o) => o === "No");
+  return pick ?? classic;
+}
+
 export function toV2Permission(card: PermissionRequest): PermissionV2Request {
   return {
     id: card.id, sessionID: card.sessionID, action: card.permission,
@@ -85,6 +115,8 @@ export class ApprovalBridge {
   private pending = new Map<string, Pending>();
   private questionCalls = new Map<string, Map<string, QuestionInfo[]>>();
   private followups = new Map<string, Map<string, { value: string; kind: "permission" | "question" }>>();
+  /** Tool calls started and not ended, per session: the one a permission prompt is about. */
+  private running = new Map<string, string[]>();
   private emit: (directory: string, event: ApprovalEvent) => void;
 
   constructor(
@@ -145,6 +177,11 @@ export class ApprovalBridge {
 
   observe(context: Context, ev: Record<string, unknown>): void {
     const callID = typeof ev.toolCallId === "string" ? ev.toolCallId : undefined;
+    if (callID !== undefined && (ev.type === "tool_execution_start" || ev.type === "tool_execution_end")) {
+      const list = (this.running.get(context.sessionID) ?? []).filter((id) => id !== callID);
+      if (ev.type === "tool_execution_start") list.push(callID);
+      this.running.set(context.sessionID, list);
+    }
     switch (ev.type) {
       case "tool_execution_start": {
         if (ev.toolName !== "ask_user_question" || callID === undefined) return;
@@ -211,7 +248,18 @@ export class ApprovalBridge {
     }
 
     let pending: Pending;
-    if (request.method === "select" && request.title.startsWith("Permission required:")) {
+    if (request.method === "select" && isPiPermissionSystemTitle(request.title)) {
+      const parsed = parsePiPermissionSystemTitle(request.title);
+      const running = this.running.get(context.sessionID) ?? [];
+      const toolCall = callID ?? (running.length === 1 ? running[0] : undefined);
+      if (toolCall !== undefined) request.toolCallId = toolCall;
+      const card: PermissionRequest = {
+        id: request.id, sessionID: context.sessionID, permission: parsed.permission, patterns: parsed.patterns,
+        always: parsed.always, metadata: { title: request.title },
+        ...(toolCall !== undefined ? { tool: { messageID: context.messageID, callID: toolCall } } : {}),
+      };
+      pending = { kind: "permission", card, context, request };
+    } else if (request.method === "select" && request.title.startsWith("Permission required:")) {
       const parsed = parsePermissionTitle(request.title);
       const card: PermissionRequest = {
         id: request.id, sessionID: context.sessionID, ...parsed,
@@ -253,8 +301,7 @@ export class ApprovalBridge {
     if (!p || p.kind !== "permission" || (sessionID !== undefined && p.context.sessionID !== sessionID)) return false;
     if (reply !== "once" && reply !== "always" && reply !== "reject") throw new ApprovalInputError("invalid permission reply");
     if (message !== undefined && typeof message !== "string") throw new ApprovalInputError("message must be a string");
-    const label = reply === "once" ? "Allow once" : reply === "always" ? "Allow always"
-      : message ? "Deny with feedback" : "Deny";
+    const label = permissionLabel(p.request.options, reply, message);
     if (!p.request.options.includes(label)) throw new ApprovalInputError(`permission option unavailable: ${label}`);
     if (message && reply === "reject" && p.request.toolCallId !== undefined) {
       this.follow(p, message, "permission");

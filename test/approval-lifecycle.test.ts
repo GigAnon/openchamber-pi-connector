@@ -3,7 +3,7 @@ import test from "node:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ApprovalBridge, extensionUiRequestFrom, parsePermissionTitle, type ApprovalEvent } from "../src/approvals.js";
+import { ApprovalBridge, extensionUiRequestFrom, isPiPermissionSystemTitle, parsePermissionTitle, parsePiPermissionSystemTitle, permissionLabel, type ApprovalEvent } from "../src/approvals.js";
 import { PiRpcClient } from "../src/pi-rpc.js";
 import { AdapterServer } from "../src/server.js";
 import { V2EventTranslator } from "../src/v2.js";
@@ -174,10 +174,30 @@ test("v2 SSE permission uses native action resources source and event type", () 
   const event = h.events[0];
   assert.ok(event);
   const frame = new V2EventTranslator().translate("/tmp", event)[0];
-  assert.equal(frame?.type, "permission.v2.asked");
+  // opencode 2.2 (OpenChamber 2.7): permission.asked, the tool call as source.id
+  assert.equal(frame?.type, "permission.asked");
   assert.equal(frame?.data.action, "read");
   assert.deepEqual(frame?.data.resources, ["/tmp/x"]);
-  assert.deepEqual(frame?.data.source, { type: "tool", messageID: "msg_test", callID: "call" });
+  assert.deepEqual(frame?.data.source, { type: "tool", messageID: "msg_test", id: "call" });
+});
+
+test("pi-permission-system prompt becomes a shell permission with its rule, replies map to its labels", () => {
+  const h = harness();
+  const piOptions = ["Yes", "Yes, allow bash \"git push *\" for this session", "No", "No, provide reason"];
+  const title = "Permission Required\ntool    : bash\nrule    : git push *\ncommand : git push origin main";
+  assert.equal(isPiPermissionSystemTitle(title), true);
+  assert.equal(isPiPermissionSystemTitle("Permission Required (Subagent)\nsubagent : reviewer · session x\ntool     : bash"), true);
+  assert.equal(isPiPermissionSystemTitle("Permission required: bash"), false);
+  assert.deepEqual(parsePiPermissionSystemTitle(title), { permission: "shell", patterns: ["git push origin main"], always: ["git push *"] });
+  assert.equal(permissionLabel(piOptions, "once"), "Yes");
+  assert.equal(permissionLabel(piOptions, "always"), piOptions[1]);
+  assert.equal(permissionLabel(piOptions, "reject"), "No");
+  assert.equal(permissionLabel(piOptions, "reject", "not now"), "No, provide reason");
+  h.ask({ id: "pp", method: "select", title, options: piOptions, toolCallId: "call" });
+  const frame = new V2EventTranslator().translate("/tmp", h.events[0]!)[0];
+  assert.equal(frame?.type, "permission.asked");
+  assert.equal(frame?.data.action, "shell");
+  assert.deepEqual(frame?.data.save, ["git push *"]);
 });
 
 test("real RPC transport forwards blocking requests without auto-cancellation", { timeout: 20000 }, async (t) => {

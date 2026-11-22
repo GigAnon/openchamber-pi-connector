@@ -144,6 +144,18 @@ export class AdapterServer {
   // SSE
   // ---------------------------------------------------------------
 
+  /** Frames for v2 (/api/event) clients only. */
+  private broadcastV2(frames: unknown[]): void {
+    const data = frames.map((frame) => `data: ${JSON.stringify(frame)}\n\n`);
+    for (const [res, flavor] of this.sseClients) {
+      if (res.writableEnded || res.destroyed) {
+        this.sseClients.delete(res);
+        continue;
+      }
+      if (flavor === "v2") for (const d of data) res.write(d);
+    }
+  }
+
   private broadcast(_directory: string, event: OCEvent | TodoUpdated): void {
     const v1Frame = `data: ${JSON.stringify(event)}\n\n`;
     const frames = event.type === "todo.updated"
@@ -987,8 +999,9 @@ export class AdapterServer {
           const text = typeof body.text === "string" ? body.text : "";
           const messageID = typeof body.id === "string" && body.id !== "" ? body.id : `msg_${randomUUID().replaceAll("-", "")}`;
           const model = modelRefFromBody(body.model ?? (body.variant !== undefined ? managed.model : undefined), body.variant);
-          this.promptAsync(managed, text, model, false, messageID);
           const delivery = typeof body.delivery === "string" ? body.delivery : "steer";
+          this.broadcastV2(this.v2events.inbox(managed.info.directory, sessionId, messageID, text, delivery));
+          this.promptAsync(managed, text, model, false, messageID);
           this.json(res, 200, {
             data: {
               id: messageID,

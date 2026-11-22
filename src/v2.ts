@@ -453,8 +453,16 @@ export class V2EventTranslator {
     return frames;
   }
 
+  /** User message ids: their (echoed) parts are not assistant output. */
+  private userMessages = new Set<string>();
+
   private onMessageUpdated(directory: string, info: OCMessageWithParts["info"]): V2Envelope[] {
-    if (info.role === "user") return []; // the UI inserts user messages optimistically
+    if (info.role === "user") {
+      // shown from session.inbox.* (opencode 2.2) or inserted optimistically (older OpenChamber)
+      this.userMessages.add(info.id);
+      if (this.userMessages.size > 10000) this.userMessages.delete(this.userMessages.values().next().value!);
+      return [];
+    }
     const st = this.state(info.sessionID);
     const frames: V2Envelope[] = [];
     const isNew = st.step === undefined || st.step.messageID !== info.id;
@@ -512,6 +520,9 @@ export class V2EventTranslator {
   }
 
   private onPartUpdated(directory: string, part: OCPart, delta?: string): V2Envelope[] {
+    // the echo of a user's own text would otherwise open an assistant text under the user message's id, which
+    // OpenChamber 2.7 then renders in place of the user's bubble
+    if (part.type === "text" && !part.synthetic && this.userMessages.has(part.messageID)) return [];
     return part.type === "tool"
       ? this.onToolPart(directory, part)
       : this.onTextPart(directory, part, delta);
@@ -640,6 +651,17 @@ export class V2EventTranslator {
       this.sessions.set(sessionID, st);
     }
     return st;
+  }
+
+  /** opencode 2.2: a prompt is an inbox item, enqueued then delivered; OpenChamber 2.7 shows the user message from
+   * these events (it no longer inserts it optimistically). */
+  inbox(directory: string, sessionID: string, inboxID: string, text: string, delivery: string): V2Envelope[] {
+    return [
+      this.frame(directory, "session.inbox.enqueued", {
+        inboxID, sessionID, item: { type: "user", payload: { text }, delivery },
+      }),
+      this.frame(directory, "session.inbox.delivered", { sessionID, inboxID }),
+    ];
   }
 
   private frame(directory: string, type: string, data: Record<string, unknown>): V2Envelope {

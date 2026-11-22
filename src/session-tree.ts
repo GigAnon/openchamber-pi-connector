@@ -218,6 +218,19 @@ export async function unrevertConversation(s: ManagedSession, pi: PiRpcClient): 
 }
 
 export async function navigate(pi: PiRpcClient, targetId: string | null, signal?: AbortSignal): Promise<string | null> {
+  try {
+    return await navigateTree(pi, targetId, signal);
+  } catch (error) {
+    // navigate_tree is oh-my-pi's; upstream pi (1.5) answers "Unknown command". A session it reopens sits at the file's
+    // leaf already, which is what revival asks for: accept that, refuse real moves (revert, branch switch).
+    if (!(error instanceof SessionTreeError) || !/Unknown command/.test(error.message)) throw error;
+    const tree = await getEntries(pi, signal);
+    if (tree.leafId === targetId) return tree.leafId;
+    throw new SessionTreeError("this pi has no navigate_tree (oh-my-pi only): revert and branch switching are unavailable");
+  }
+}
+
+async function navigateTree(pi: PiRpcClient, targetId: string | null, signal?: AbortSignal): Promise<string | null> {
   // The protocol cannot address null. Selecting a root user resets its leaf.
   if (targetId === null) {
     const tree = await getEntries(pi, signal);

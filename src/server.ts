@@ -213,12 +213,17 @@ export class AdapterServer {
     const url = new URL(req.url ?? "/", this.url);
     const path = url.pathname.replace(/\/+$/, "") || "/";
     const method = req.method ?? "GET";
-    const directory =
+    const rawDirectory =
       url.searchParams.get("directory") ??
       url.searchParams.get("location[directory]") ??
       url.searchParams.get("location") ??
       req.headers["x-opencode-directory"] as string | undefined ??
       this.options.defaultDirectory;
+    // OpenChamber 2.x sends x-opencode-directory percent-encoded ("%2Fworkspace")
+    let directory = rawDirectory;
+    if (/%[0-9A-Fa-f]{2}/.test(rawDirectory)) {
+      try { directory = decodeURIComponent(rawDirectory); } catch { directory = rawDirectory; }
+    }
 
     // SSE stream (v2 clients subscribe at /api/event; v1 at /event)
     if (method === "GET" && (path === "/event" || path === "/global/event")) {

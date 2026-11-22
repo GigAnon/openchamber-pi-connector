@@ -1101,6 +1101,7 @@ export class SessionManager {
       }
 
       case "agent_idle":
+      case "agent_settled": // pi 1.5's name for it
         // agent_end closes one run, not the session: OmO may still retry or
         // start a deferred continuation. Only agent_idle settles that work.
         this.setStatus(s, { type: "idle" });

@@ -19,7 +19,7 @@ import { SubagentBridge, taskParts, updateTaskParts, taskCompletions } from "./s
 import { sessionDiff, touchedFiles } from "./session-diff.js";
 import { announceSessionNotice, shellTitle, shellUserMessage } from "./session-commands.js";
 import { debugLog } from "./misc-routes.js";
-import { ocIdFor, piSessionDir, piSessionsRootMtime, scanAllPiSessions, scanPiSessions, SessionPersistenceError, SessionStore, type ScannedSession } from "./session-store.js";
+import { CLIENT_SESSION_ID, ocIdFor, piSessionDir, piSessionsRootMtime, scanAllPiSessions, scanPiSessions, SessionPersistenceError, SessionStore, type ScannedSession } from "./session-store.js";
 import type {
   OCAssistantMessage,
   OCEvent,
@@ -135,13 +135,17 @@ export class SessionManager {
       (session, raw) => parsePiSessionText(session, getAgentName(), raw));
   }
 
-  async create(directory: string, title?: string, parentID?: string): Promise<OCSession> {
-    return this.lifecycle.run(() => this.createLive(directory, title, parentID));
+  async create(directory: string, title?: string, parentID?: string, requestedId?: string): Promise<OCSession> {
+    return this.lifecycle.run(() => this.createLive(directory, title, parentID, requestedId));
   }
 
-  private async createLive(directory: string, title?: string, parentID?: string): Promise<OCSession> {
+  private async createLive(directory: string, title?: string, parentID?: string, requestedId?: string): Promise<OCSession> {
     await this.lifecycle.makeRoom();
-    const pi = new PiRpcClient({ cwd: directory, clock: this.lifecycle.clock });
+    // OpenChamber 2.x picks the session id itself and drops the session if the server answers with another one:
+    // start pi on a session with that id (ocIdFor maps it back to itself)
+    const wanted = requestedId !== undefined && CLIENT_SESSION_ID.test(requestedId) && this.get(requestedId) === undefined
+      ? requestedId : undefined;
+    const pi = new PiRpcClient({ cwd: directory, clock: this.lifecycle.clock, ...(wanted ? { args: ["--session-id", wanted] } : {}) });
     const state = await pi.command<PiState>({ type: "get_state" }).catch(async (error: unknown) => {
       await pi.dispose();
       throw error;

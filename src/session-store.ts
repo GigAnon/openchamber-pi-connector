@@ -39,8 +39,13 @@ export function piSessionDir(cwd: string): string {
   return join(piSessionsRoot(), `--${sanitized}--`);
 }
 
+/** An OpenCode session id a client may choose (OpenChamber 2.x sends one with session.create). */
+export const CLIENT_SESSION_ID = /^ses_[A-Za-z0-9]{8,64}$/;
+
 /** Deterministic OpenChamber session id for a pi session id. */
 export function ocIdFor(piSessionId: string): string {
+  // a session created for a client-chosen id (OpenChamber 2.x) is a pi session with that very id
+  if (CLIENT_SESSION_ID.test(piSessionId)) return piSessionId;
   return `ses_${createHash("md5").update(piSessionId).digest("hex")}`;
 }
 

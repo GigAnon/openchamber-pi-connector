@@ -782,12 +782,13 @@ export class AdapterServer {
     }
     if (path === "/api/session" && method === "POST") {
       const body = (await this.body(req)) as {
+        id?: string;
         title?: string;
         parentID?: string;
         location?: { directory?: string };
       };
       const dir = body.location?.directory ?? directory;
-      const info = await this.sessions.create(dir, body.title, body.parentID);
+      const info = await this.sessions.create(dir, body.title, body.parentID, body.id);
       this.json(res, 200, { data: this.v2Session(info) });
       return;
     }

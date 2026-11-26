@@ -61,6 +61,8 @@ export interface ManagedSession extends ThinkingState {
   /** undefined while dormant; resolved via get_state on create/revive. */
   model: OCModelRef | undefined;
   streaming: StreamingState | undefined;
+  /** An assistant message that stopped for tools: completed at turn_end, once they ran. */
+  openToolMessage?: OCAssistantMessage | undefined;
   /** Cancels the adapter-owned user bash waiter and its OmO execution. */
   cancelShell?: (interrupted?: boolean) => void;
   /**
@@ -1088,6 +1090,7 @@ export class SessionManager {
         if (ev.willRetry === true) break; // auto-retry keeps the session busy
         s.approvals?.finishTurn();
         this.finalizeDanglingTools(s);
+        this.completeToolMessage(s);
         this.subagents.finishCalls(s.info.id);
         this.finishStreaming(s);
         this.emitDiff(s);
@@ -1112,6 +1115,7 @@ export class SessionManager {
         // pi delivers tool results here, matched back to parts by toolCallId.
         const results = ev.toolResults as Array<Record<string, unknown>> | undefined;
         if (Array.isArray(results)) this.applyToolResults(s, results);
+        this.completeToolMessage(s);
         this.emitDiff(s);
         break;
       }
@@ -1198,7 +1202,13 @@ export class SessionManager {
             s.streaming.message.modelID = s.model.modelID;
           }
           this.applyUsage(s.streaming.message, ended.usage);
-          s.streaming.message.time.completed = Date.now();
+          // pi ends the assistant message before it runs the tools the message
+          // asked for; OpenCode completes the message once those tools are done.
+          // A client shows a running tool in a completed message as
+          // "Interrupted", so a tool-use message stays open until turn_end
+          // (which carries the tool results) or agent_end.
+          if (ended.stopReason === "toolUse") s.openToolMessage = s.streaming.message;
+          else s.streaming.message.time.completed = Date.now();
           this.emit(dir, { type: "message.updated", properties: { info: s.streaming.message } });
           this.finishStreaming(s);
         }
@@ -1227,6 +1237,15 @@ export class SessionManager {
       default:
         break; // turn_start, queue_update, compaction_* — future milestones
     }
+  }
+
+  /** Completes the tool-use assistant message held open since its message_end. */
+  private completeToolMessage(s: ManagedSession): void {
+    const message = s.openToolMessage;
+    if (message === undefined) return;
+    s.openToolMessage = undefined;
+    message.time.completed = Date.now();
+    this.emit(s.info.directory, { type: "message.updated", properties: { info: message } });
   }
 
   private finishStreaming(s: ManagedSession): void {
